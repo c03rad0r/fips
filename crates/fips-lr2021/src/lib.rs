@@ -13,8 +13,8 @@ pub mod frame;
 pub mod link;
 
 pub use bridge::{BridgeDecoder, BridgeFrame, BridgeKind, SerialBridge};
-pub use device::{handshake, open_device, poll_rx, send_packets};
 pub use config::{Band, BridgeConfig, LinkConfig, Lr2021Config, RadioProfile};
+pub use device::{handshake, open_device, poll_rx, send_packets};
 pub use frame::{Frame, FrameKind};
 pub use link::{Link, LinkError, LinkStats, RxOutcome};
 

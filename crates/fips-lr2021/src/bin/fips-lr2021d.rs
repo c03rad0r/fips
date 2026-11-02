@@ -11,9 +11,9 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
-use fips_lr2021::bridge::{BridgeKind, RxPayload};
-use fips_lr2021::{send_packets, Band, Link, Lr2021Config, SerialBridge};
 use crossbeam_channel::unbounded;
+use fips_lr2021::bridge::{BridgeKind, RxPayload};
+use fips_lr2021::{Band, Link, Lr2021Config, SerialBridge, send_packets};
 
 #[derive(Debug, Parser)]
 #[command(about = "FIPS over LR2021/FLRC UDP daemon")]
@@ -87,18 +87,22 @@ fn main() {
         bridge_cfg.profile.radio_payload
     );
 
-    let (reader, _) =
-        fips_lr2021::open_device(&bridge_cfg, link_cfg.clone()).unwrap_or_else(|e| fatal(&e.to_string()));
+    let (reader, _) = fips_lr2021::open_device(&bridge_cfg, link_cfg.clone())
+        .unwrap_or_else(|e| fatal(&e.to_string()));
     let mut writer = reader
         .try_clone()
         .unwrap_or_else(|e| fatal(&format!("cannot clone serial port: {e}")));
-    eprintln!("bridge ready; local id {:#010x}, peer id {:#010x}", args.local_id, args.peer_id);
+    eprintln!(
+        "bridge ready; local id {:#010x}, peer id {:#010x}",
+        args.local_id, args.peer_id
+    );
 
     let link = Arc::new(Mutex::new(
         Link::new(link_cfg.clone()).unwrap_or_else(|e| fatal(&e.to_string())),
     ));
     let stop = Arc::new(AtomicBool::new(false));
-    let socket = Arc::new(UdpSocket::bind(&args.udp_bind).unwrap_or_else(|e| fatal(&e.to_string())));
+    let socket =
+        Arc::new(UdpSocket::bind(&args.udp_bind).unwrap_or_else(|e| fatal(&e.to_string())));
     socket
         .set_read_timeout(Some(Duration::from_millis(200)))
         .unwrap_or_else(|e| fatal(&e.to_string()));
@@ -170,10 +174,9 @@ fn main() {
                             Err(e) => eprintln!("link rx drop: {e}"),
                         }
                     }
-                    BridgeKind::Evt => eprintln!(
-                        "bridge event: {}",
-                        String::from_utf8_lossy(&frame.payload)
-                    ),
+                    BridgeKind::Evt => {
+                        eprintln!("bridge event: {}", String::from_utf8_lossy(&frame.payload))
+                    }
                     BridgeKind::Stat => {
                         if let Some(stat) = fips_lr2021::bridge::StatPayload::decode(&frame.payload)
                         {
@@ -227,13 +230,18 @@ fn main() {
                         eprintln!("dropping oversized UDP datagram: {n} bytes");
                         continue;
                     }
-                    let packets = match udp_link.lock().unwrap().submit(&buf[..n], args.peer_id, now_ms()) {
-                        Ok(packets) => packets,
-                        Err(e) => {
-                            eprintln!("link tx drop: {e}");
-                            continue;
-                        }
-                    };
+                    let packets =
+                        match udp_link
+                            .lock()
+                            .unwrap()
+                            .submit(&buf[..n], args.peer_id, now_ms())
+                        {
+                            Ok(packets) => packets,
+                            Err(e) => {
+                                eprintln!("link tx drop: {e}");
+                                continue;
+                            }
+                        };
                     let _ = udp_tx.send(packets);
                 }
                 Err(e)
@@ -255,7 +263,10 @@ fn main() {
         }
     });
 
-    eprintln!("UDP listening on {}; configure FIPS transports.udp to point here", args.udp_bind);
+    eprintln!(
+        "UDP listening on {}; configure FIPS transports.udp to point here",
+        args.udp_bind
+    );
     while !stop.load(Ordering::Relaxed) {
         thread::sleep(Duration::from_millis(500));
     }

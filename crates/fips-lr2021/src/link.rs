@@ -10,8 +10,8 @@ use thiserror::Error;
 
 use crate::config::LinkConfig;
 use crate::frame::{
-    ack_payload, bitmap_get, bitmap_len, bitmap_set, parse_ack_payload, Frame, FrameError,
-    FrameKind, HEADER_SIZE, CRC_SIZE, MAX_FRAGMENTS,
+    CRC_SIZE, Frame, FrameError, FrameKind, HEADER_SIZE, MAX_FRAGMENTS, ack_payload, bitmap_get,
+    bitmap_len, bitmap_set, parse_ack_payload,
 };
 
 pub const BROADCAST_ID: u32 = 0xFFFF_FFFF;
@@ -92,7 +92,7 @@ impl Link {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u16)
             .unwrap_or(1))
-            .max(1);
+        .max(1);
         Ok(Self {
             cfg,
             epoch,
@@ -235,7 +235,12 @@ impl Link {
         let key = (frame.src, frame.epoch, frame.seq);
         if self.completed.contains_key(&key) {
             self.stats.duplicates += 1;
-            return self.ack_outcome(frame, frag_count, &vec![0xFF; bitmap_len(frag_count)], false);
+            return self.ack_outcome(
+                frame,
+                frag_count,
+                &vec![0xFF; bitmap_len(frag_count)],
+                false,
+            );
         }
 
         let entry = self.reassembly.entry(key).or_insert_with(|| Reassembly {
@@ -331,7 +336,11 @@ impl Link {
     ) -> Result<RxOutcome, LinkError> {
         let payload = ack_payload(frag_count, bitmap);
         let ack = Frame {
-            kind: if nack { FrameKind::Nack } else { FrameKind::Ack },
+            kind: if nack {
+                FrameKind::Nack
+            } else {
+                FrameKind::Ack
+            },
             flags: 0,
             src: self.cfg.local_id,
             dst: frame.src,

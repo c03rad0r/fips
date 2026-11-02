@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crossbeam_channel::{unbounded, Sender};
+use crossbeam_channel::{Sender, unbounded};
 
 use crate::config::Lr2021Config;
 use crate::transport::{
@@ -17,7 +17,7 @@ use crate::transport::{
     TransportId, TransportState, TransportType,
 };
 use fips_lr2021::bridge::{BridgeKind, RxPayload};
-use fips_lr2021::{send_packets, Link};
+use fips_lr2021::{Link, send_packets};
 
 /// Native FIPS transport over an LR2021 USB bridge.
 pub struct Lr2021Transport {

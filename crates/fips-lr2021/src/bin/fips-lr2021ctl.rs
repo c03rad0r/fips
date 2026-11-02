@@ -4,7 +4,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand};
 use fips_lr2021::bridge::{BridgeKind, HelloAckPayload, RxPayload};
-use fips_lr2021::{send_packets, Band, Lr2021Config, SerialBridge};
+use fips_lr2021::{Band, Lr2021Config, SerialBridge, send_packets};
 
 #[derive(Debug, Parser)]
 #[command(about = "Configure and test an LR2021/FLRC bridge")]
@@ -107,8 +107,7 @@ fn run(args: Args) -> Result<(), String> {
             };
             let bridge_cfg = cfg.bridge_config()?;
             let link_cfg = cfg.link_config()?;
-            let _ = fips_lr2021::open_device(&bridge_cfg, link_cfg)
-                .map_err(|e| e.to_string())?;
+            let _ = fips_lr2021::open_device(&bridge_cfg, link_cfg).map_err(|e| e.to_string())?;
             println!(
                 "configured band={} freq={} Hz flrc={} kbps power={} dBm payload={}B relay={}",
                 bridge_cfg.profile.band.as_str(),
@@ -133,7 +132,15 @@ fn run(args: Args) -> Result<(), String> {
             timeout_ms,
         } => {
             let band = Band::parse(&band).ok_or_else(|| format!("unknown band '{band}'"))?;
-            per(&args.serial, args.baud, band, count, size, peer_id, timeout_ms)
+            per(
+                &args.serial,
+                args.baud,
+                band,
+                count,
+                size,
+                peer_id,
+                timeout_ms,
+            )
         }
         Command::Echo { band, seconds } => {
             let band = Band::parse(&band).ok_or_else(|| format!("unknown band '{band}'"))?;
@@ -198,10 +205,7 @@ fn status(serial: &str, baud: u32) -> Result<(), String> {
                     }
                 }
                 BridgeKind::Evt => {
-                    println!(
-                        "event: {}",
-                        String::from_utf8_lossy(&frame.payload)
-                    );
+                    println!("event: {}", String::from_utf8_lossy(&frame.payload));
                     saw = true;
                 }
                 _ => {}
@@ -356,8 +360,7 @@ fn echo(serial: &str, baud: u32, band: Band, seconds: u64) -> Result<(), String>
             };
             if let Ok(outcome) = link.process(&rx.data, now_ms()) {
                 if !outcome.outbound.is_empty() {
-                    send_packets(&mut bridge, &outcome.outbound)
-                        .map_err(|e| e.to_string())?;
+                    send_packets(&mut bridge, &outcome.outbound).map_err(|e| e.to_string())?;
                 }
                 for (_, data) in outcome.delivered {
                     frames += 1;

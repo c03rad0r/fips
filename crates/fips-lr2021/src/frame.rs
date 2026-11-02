@@ -68,7 +68,15 @@ pub enum FrameError {
 }
 
 impl<'a> Frame<'a> {
-    pub fn data(src: u32, dst: u32, epoch: u16, seq: u16, frag_idx: u8, frag_count: u8, payload: &'a [u8]) -> Self {
+    pub fn data(
+        src: u32,
+        dst: u32,
+        epoch: u16,
+        seq: u16,
+        frag_idx: u8,
+        frag_count: u8,
+        payload: &'a [u8],
+    ) -> Self {
         Self {
             kind: FrameKind::Data,
             flags: 0,
@@ -115,8 +123,7 @@ impl<'a> Frame<'a> {
         if version != VERSION {
             return Err(FrameError::BadVersion(version));
         }
-        let kind = FrameKind::from_u8(buf[2] & 0x0F)
-            .ok_or(FrameError::BadKind(buf[2] & 0x0F))?;
+        let kind = FrameKind::from_u8(buf[2] & 0x0F).ok_or(FrameError::BadKind(buf[2] & 0x0F))?;
         let flags = buf[3];
         let src = u32::from_le_bytes(buf[4..8].try_into().unwrap());
         let dst = u32::from_le_bytes(buf[8..12].try_into().unwrap());
