@@ -40,11 +40,15 @@ enum Command {
     Status,
     /// Print received radio packets.
     Monitor {
+        #[arg(long, default_value = "us2400")]
+        band: String,
         #[arg(long, default_value_t = 10)]
         seconds: u64,
     },
     /// Send a small PER burst and report delivery.
     Per {
+        #[arg(long, default_value = "us2400")]
+        band: String,
         #[arg(long, default_value_t = 100)]
         count: u32,
         #[arg(long, default_value_t = 64)]
@@ -53,6 +57,13 @@ enum Command {
         peer_id: u32,
         #[arg(long, default_value_t = 1000)]
         timeout_ms: u64,
+    },
+    /// Run the link-layer responder: ACK received frames and print them.
+    Echo {
+        #[arg(long, default_value = "us2400")]
+        band: String,
+        #[arg(long, default_value_t = 30)]
+        seconds: u64,
     },
 }
 
@@ -110,13 +121,24 @@ fn run(args: Args) -> Result<(), String> {
             Ok(())
         }
         Command::Status => status(&args.serial, args.baud),
-        Command::Monitor { seconds } => monitor(&args.serial, args.baud, seconds),
+        Command::Monitor { band, seconds } => {
+            let band = Band::parse(&band).ok_or_else(|| format!("unknown band '{band}'"))?;
+            monitor(&args.serial, args.baud, band, seconds)
+        }
         Command::Per {
+            band,
             count,
             size,
             peer_id,
             timeout_ms,
-        } => per(&args.serial, args.baud, count, size, peer_id, timeout_ms),
+        } => {
+            let band = Band::parse(&band).ok_or_else(|| format!("unknown band '{band}'"))?;
+            per(&args.serial, args.baud, band, count, size, peer_id, timeout_ms)
+        }
+        Command::Echo { band, seconds } => {
+            let band = Band::parse(&band).ok_or_else(|| format!("unknown band '{band}'"))?;
+            echo(&args.serial, args.baud, band, seconds)
+        }
     }
 }
 
@@ -193,12 +215,12 @@ fn status(serial: &str, baud: u32) -> Result<(), String> {
     }
 }
 
-fn monitor(serial: &str, baud: u32, seconds: u64) -> Result<(), String> {
+fn monitor(serial: &str, baud: u32, band: Band, seconds: u64) -> Result<(), String> {
     let (mut bridge, _) = fips_lr2021::open_device(
         &fips_lr2021::BridgeConfig {
             port: serial.to_string(),
             baud,
-            profile: Band::Us2400.default_profile(),
+            profile: band.default_profile(),
             relay: false,
         },
         fips_lr2021::LinkConfig::default(),
@@ -230,6 +252,7 @@ fn monitor(serial: &str, baud: u32, seconds: u64) -> Result<(), String> {
 fn per(
     serial: &str,
     baud: u32,
+    band: Band,
     count: u32,
     size: usize,
     peer_id: u32,
@@ -238,7 +261,7 @@ fn per(
     let cfg = Lr2021Config {
         port: Some(serial.to_string()),
         baud: Some(baud),
-        band: Some(Band::Us2400),
+        band: Some(band),
         ..Lr2021Config::default()
     };
     let bridge_cfg = cfg.bridge_config()?;
@@ -306,6 +329,48 @@ fn per(
     println!(
         "per: sent={count} delivered={delivered} loss={per:.1}% elapsed={elapsed:.2}s avg_rssi={avg_rssi:.1} dBm"
     );
+    Ok(())
+}
+
+fn echo(serial: &str, baud: u32, band: Band, seconds: u64) -> Result<(), String> {
+    let cfg = Lr2021Config {
+        port: Some(serial.to_string()),
+        baud: Some(baud),
+        band: Some(band),
+        local_id: Some(2),
+        ..Lr2021Config::default()
+    };
+    let bridge_cfg = cfg.bridge_config()?;
+    let link_cfg = cfg.link_config()?;
+    let (mut bridge, mut link) =
+        fips_lr2021::open_device(&bridge_cfg, link_cfg).map_err(|e| e.to_string())?;
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    let mut frames = 0u64;
+    while Instant::now() < deadline {
+        for frame in bridge.read_frames(100).map_err(|e| e.to_string())? {
+            if frame.kind != BridgeKind::Rx {
+                continue;
+            }
+            let Some(rx) = RxPayload::decode(&frame.payload) else {
+                continue;
+            };
+            if let Ok(outcome) = link.process(&rx.data, now_ms()) {
+                if !outcome.outbound.is_empty() {
+                    send_packets(&mut bridge, &outcome.outbound)
+                        .map_err(|e| e.to_string())?;
+                }
+                for (_, data) in outcome.delivered {
+                    frames += 1;
+                    println!("echo rx len={} data={}", data.len(), hex(&data));
+                }
+            }
+        }
+        let retransmit = link.poll(now_ms());
+        if !retransmit.is_empty() {
+            send_packets(&mut bridge, &retransmit).map_err(|e| e.to_string())?;
+        }
+    }
+    println!("echo: {frames} frames");
     Ok(())
 }
 
