@@ -1,0 +1,16 @@
+[package]
+name = "fips-lr2021"
+version = "0.1.0"
+edition = "2024"
+description = "LR2021/FLRC link layer and serial bridge for FIPS"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+crossbeam-channel = "0.5"
+clap = { version = "4", features = ["derive"] }
+serialport = { version = "4", default-features = false }
+
+[dev-dependencies]
+rand = "0.10"
