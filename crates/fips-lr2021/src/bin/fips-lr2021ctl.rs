@@ -1,5 +1,6 @@
 //! `fips-lr2021ctl` — configure and exercise an LR2021 bridge.
 
+use std::io::{Read, Write};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand};
@@ -19,6 +20,8 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Put an E80 STM32 bench board into binary bridge mode.
+    Bridge,
     /// Send HELLO and print the bridge identity.
     Hello,
     /// Configure the radio and print the applied values.
@@ -84,6 +87,7 @@ fn main() {
 
 fn run(args: Args) -> Result<(), String> {
     match args.command {
+        Command::Bridge => bridge_command(&args.serial, args.baud),
         Command::Hello => hello(&args.serial, args.baud),
         Command::Cfg {
             band,
@@ -147,6 +151,36 @@ fn run(args: Args) -> Result<(), String> {
             echo(&args.serial, args.baud, band, seconds)
         }
     }
+}
+
+fn bridge_command(serial: &str, baud: u32) -> Result<(), String> {
+    let mut port = serialport::new(serial, baud)
+        .timeout(Duration::from_millis(200))
+        .open()
+        .map_err(|e| e.to_string())?;
+    port.write_all(b"\r\nBRIDGE\r\n")
+        .map_err(|e| e.to_string())?;
+    port.flush().map_err(|e| e.to_string())?;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut buf = [0u8; 256];
+    let mut text = String::new();
+    while Instant::now() < deadline {
+        match port.read(&mut buf) {
+            Ok(0) => {}
+            Ok(n) => {
+                text.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if text.contains("OK BRIDGE") {
+                    print!("{text}");
+                    return Ok(());
+                }
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::TimedOut
+                    || e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Err(format!("no OK BRIDGE response; saw: {text:?}"))
 }
 
 fn hello(serial: &str, baud: u32) -> Result<(), String> {
