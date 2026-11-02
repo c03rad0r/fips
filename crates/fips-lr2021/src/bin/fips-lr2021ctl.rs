@@ -288,6 +288,7 @@ fn per(
             .map_err(|e| e.to_string())?;
         send_packets(&mut bridge, &packets).map_err(|e| e.to_string())?;
 
+        let before = delivered;
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
         while Instant::now() < deadline {
             for frame in bridge.read_frames(20).map_err(|e| e.to_string())? {
@@ -314,7 +315,7 @@ fn per(
             if !retransmit.is_empty() {
                 send_packets(&mut bridge, &retransmit).map_err(|e| e.to_string())?;
             }
-            if link.pending_len() == 0 {
+            if delivered > before || delivered >= count {
                 break;
             }
         }
@@ -352,20 +353,33 @@ fn echo(serial: &str, baud: u32, band: Band, seconds: u64) -> Result<(), String>
     let mut frames = 0u64;
     while Instant::now() < deadline {
         for frame in bridge.read_frames(100).map_err(|e| e.to_string())? {
+            println!(
+                "echo frame kind={:?} len={}",
+                frame.kind,
+                frame.payload.len()
+            );
             if frame.kind != BridgeKind::Rx {
                 continue;
             }
             let Some(rx) = RxPayload::decode(&frame.payload) else {
+                println!("echo: bad RX payload");
                 continue;
             };
-            if let Ok(outcome) = link.process(&rx.data, now_ms()) {
-                if !outcome.outbound.is_empty() {
-                    send_packets(&mut bridge, &outcome.outbound).map_err(|e| e.to_string())?;
+            match link.process(&rx.data, now_ms()) {
+                Ok(outcome) => {
+                    if !outcome.outbound.is_empty() {
+                        send_packets(&mut bridge, &outcome.outbound).map_err(|e| e.to_string())?;
+                    }
+                    for (src, data) in outcome.delivered {
+                        frames += 1;
+                        println!("echo rx len={} data={}", data.len(), hex(&data));
+                        // Reply so a PER sender can count completed round trips.
+                        if let Ok(reply) = link.submit(&data, src, now_ms()) {
+                            send_packets(&mut bridge, &reply).map_err(|e| e.to_string())?;
+                        }
+                    }
                 }
-                for (_, data) in outcome.delivered {
-                    frames += 1;
-                    println!("echo rx len={} data={}", data.len(), hex(&data));
-                }
+                Err(e) => println!("echo: link process error: {e}"),
             }
         }
         let retransmit = link.poll(now_ms());
