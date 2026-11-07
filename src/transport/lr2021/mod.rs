@@ -136,7 +136,7 @@ impl Lr2021Transport {
                                 let _ = reader_tx.send(outcome.outbound);
                             }
                             for (src, data) in outcome.delivered {
-                                let addr = TransportAddr::from_bytes(&src.to_le_bytes());
+                                let addr = id_to_addr(src);
                                 if reader_packet_tx
                                     .try_send(ReceivedPacket::new(transport_id, addr, data))
                                     .is_err()
@@ -218,7 +218,7 @@ impl Transport for Lr2021Transport {
         if self.state != TransportState::Up {
             return Err(TransportError::NotStarted);
         }
-        let dst = addr_to_id(addr);
+        let dst = addr_to_id(addr)?;
         let now = now_ms();
         let mut guard = self.link.lock().unwrap();
         let link = guard.as_mut().ok_or(TransportError::NotStarted)?;
@@ -257,13 +257,55 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn addr_to_id(addr: &TransportAddr) -> u32 {
-    let bytes = addr.as_bytes();
-    if bytes.is_empty() {
-        return fips_lr2021::link::BROADCAST_ID;
+/// Peer addresses cross the YAML/API boundary as UTF-8 strings. Use the same
+/// canonical decimal form in both directions; interpreting the ASCII bytes as
+/// a little-endian integer made `addr: "2"` become link id 0x32.
+fn addr_to_id(addr: &TransportAddr) -> Result<u32, TransportError> {
+    if addr.is_empty() {
+        return Ok(fips_lr2021::link::BROADCAST_ID);
     }
-    let mut buf = [0u8; 4];
-    let n = bytes.len().min(4);
-    buf[..n].copy_from_slice(&bytes[..n]);
-    u32::from_le_bytes(buf)
+    let text = addr.as_str().ok_or_else(|| {
+        TransportError::SendFailed("LR2021 peer address must be decimal text".to_string())
+    })?;
+    let parsed = if let Some(hex) = text.strip_prefix("0x") {
+        u32::from_str_radix(hex, 16)
+    } else {
+        text.parse::<u32>()
+    };
+    parsed.map_err(|_| {
+        TransportError::SendFailed(format!(
+            "invalid LR2021 peer address '{text}'; use a decimal id such as '2'"
+        ))
+    })
+}
+
+fn id_to_addr(id: u32) -> TransportAddr {
+    TransportAddr::from_string(&id.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{addr_to_id, id_to_addr};
+    use crate::transport::TransportAddr;
+
+    #[test]
+    fn peer_addresses_round_trip_decimal_link_ids() {
+        assert_eq!(addr_to_id(&TransportAddr::from_string("2")).unwrap(), 2);
+        assert_eq!(
+            addr_to_id(&TransportAddr::from_string("0x00000002")).unwrap(),
+            2
+        );
+        assert_eq!(id_to_addr(2).as_str(), Some("2"));
+    }
+
+    #[test]
+    fn invalid_or_non_utf8_addresses_do_not_turn_into_ascii_ids() {
+        assert!(addr_to_id(&TransportAddr::from_string("00000002")).is_ok()); // decimal
+        assert_eq!(
+            addr_to_id(&TransportAddr::from_string("00000002")).unwrap(),
+            2
+        );
+        assert!(addr_to_id(&TransportAddr::from_string("2dd4d4b2")).is_err());
+        assert!(addr_to_id(&TransportAddr::from_bytes(&[2, 0, 0, 0])).is_err());
+    }
 }

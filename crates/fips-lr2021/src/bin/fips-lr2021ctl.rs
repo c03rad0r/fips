@@ -14,6 +14,9 @@ struct Args {
     serial: String,
     #[arg(long, default_value_t = 2_000_000)]
     baud: u32,
+    /// FLRC sync word as 8 hex digits, e.g. 2dd4d4b2 (E80 bench firmware default).
+    #[arg(long)]
+    sync_word: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -86,6 +89,7 @@ fn main() {
 }
 
 fn run(args: Args) -> Result<(), String> {
+    let sync = args.sync_word.clone();
     match args.command {
         Command::Bridge => bridge_command(&args.serial, args.baud),
         Command::Hello => hello(&args.serial, args.baud),
@@ -107,6 +111,7 @@ fn run(args: Args) -> Result<(), String> {
                 tx_power_dbm: power_dbm,
                 radio_payload,
                 relay: Some(relay),
+                sync_word: sync.clone(),
                 ..Lr2021Config::default()
             };
             let bridge_cfg = cfg.bridge_config()?;
@@ -126,7 +131,7 @@ fn run(args: Args) -> Result<(), String> {
         Command::Status => status(&args.serial, args.baud),
         Command::Monitor { band, seconds } => {
             let band = Band::parse(&band).ok_or_else(|| format!("unknown band '{band}'"))?;
-            monitor(&args.serial, args.baud, band, seconds)
+            monitor(&args.serial, args.baud, band, seconds, sync.clone())
         }
         Command::Per {
             band,
@@ -144,11 +149,12 @@ fn run(args: Args) -> Result<(), String> {
                 size,
                 peer_id,
                 timeout_ms,
+                sync.clone(),
             )
         }
         Command::Echo { band, seconds } => {
             let band = Band::parse(&band).ok_or_else(|| format!("unknown band '{band}'"))?;
-            echo(&args.serial, args.baud, band, seconds)
+            echo(&args.serial, args.baud, band, seconds, sync.clone())
         }
     }
 }
@@ -253,17 +259,23 @@ fn status(serial: &str, baud: u32) -> Result<(), String> {
     }
 }
 
-fn monitor(serial: &str, baud: u32, band: Band, seconds: u64) -> Result<(), String> {
-    let (mut bridge, _) = fips_lr2021::open_device(
-        &fips_lr2021::BridgeConfig {
-            port: serial.to_string(),
-            baud,
-            profile: band.default_profile(),
-            relay: false,
-        },
-        fips_lr2021::LinkConfig::default(),
-    )
-    .map_err(|e| e.to_string())?;
+fn monitor(
+    serial: &str,
+    baud: u32,
+    band: Band,
+    seconds: u64,
+    sync: Option<String>,
+) -> Result<(), String> {
+    let cfg = Lr2021Config {
+        port: Some(serial.to_string()),
+        baud: Some(baud),
+        band: Some(band),
+        sync_word: sync,
+        ..Lr2021Config::default()
+    };
+    let (mut bridge, _) =
+        fips_lr2021::open_device(&cfg.bridge_config()?, cfg.link_config()?)
+            .map_err(|e| e.to_string())?;
     let deadline = Instant::now() + Duration::from_secs(seconds);
     let mut packets = 0u64;
     while Instant::now() < deadline {
@@ -295,11 +307,13 @@ fn per(
     size: usize,
     peer_id: u32,
     timeout_ms: u64,
+    sync: Option<String>,
 ) -> Result<(), String> {
     let cfg = Lr2021Config {
         port: Some(serial.to_string()),
         baud: Some(baud),
         band: Some(band),
+        sync_word: sync,
         ..Lr2021Config::default()
     };
     let bridge_cfg = cfg.bridge_config()?;
@@ -371,11 +385,18 @@ fn per(
     Ok(())
 }
 
-fn echo(serial: &str, baud: u32, band: Band, seconds: u64) -> Result<(), String> {
+fn echo(
+    serial: &str,
+    baud: u32,
+    band: Band,
+    seconds: u64,
+    sync: Option<String>,
+) -> Result<(), String> {
     let cfg = Lr2021Config {
         port: Some(serial.to_string()),
         baud: Some(baud),
         band: Some(band),
+        sync_word: sync,
         local_id: Some(2),
         ..Lr2021Config::default()
     };
