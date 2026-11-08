@@ -1,6 +1,6 @@
 //! Convenience wrapper for opening and configuring a bridge.
 
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::bridge::{
     BridgeError, BridgeKind, CfgAckPayload, CfgPayload, HelloAckPayload, RxPayload, SerialBridge,
@@ -35,6 +35,17 @@ pub fn handshake(
             ack.protocol, BRIDGE_PROTOCOL_VERSION
         )));
     }
+
+    // Optional extension: older bridges ignore it. New bridges use the link ID
+    // for a TX slot and the host Unix epoch for a common slot phase.
+    let mut ext = Vec::with_capacity(12);
+    ext.extend_from_slice(&cfg.local_id.to_le_bytes());
+    let epoch_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    ext.extend_from_slice(&epoch_ms.to_le_bytes());
+    bridge.write_frame(BridgeKind::CfgExt, &ext)?;
 
     let payload = CfgPayload {
         profile: cfg.profile,

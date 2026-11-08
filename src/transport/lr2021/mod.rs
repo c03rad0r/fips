@@ -74,11 +74,19 @@ impl Lr2021Transport {
             .link_config()
             .map_err(TransportError::StartFailed)?;
 
-        let (reader, link) = fips_lr2021::open_device(&bridge_cfg, link_cfg)
+        let (reader, link) = fips_lr2021::open_device(&bridge_cfg, link_cfg.clone())
             .map_err(|e| TransportError::StartFailed(e.to_string()))?;
         let mut writer = reader
             .try_clone()
             .map_err(|e| TransportError::StartFailed(format!("serial clone: {e}")))?;
+
+        tracing::info!(
+            local_id = link_cfg.local_id,
+            payload = bridge_cfg.profile.radio_payload,
+            frequency = bridge_cfg.profile.frequency_hz,
+            bitrate = bridge_cfg.profile.bitrate_kbps,
+            "lr2021 transport started"
+        );
 
         *self.link.lock().unwrap() = Some(link);
         let link = Arc::clone(&self.link);
@@ -126,6 +134,11 @@ impl Lr2021Transport {
                     let Some(rx) = RxPayload::decode(&frame.payload) else {
                         continue;
                     };
+                    tracing::debug!(
+                        len = rx.data.len(),
+                        head = %hex_prefix(&rx.data),
+                        "lr2021 raw receive"
+                    );
                     let mut guard = reader_link.lock().unwrap();
                     let Some(link) = guard.as_mut() else {
                         continue;
@@ -145,7 +158,12 @@ impl Lr2021Transport {
                                 }
                             }
                         }
-                        Err(e) => tracing::debug!(error = %e, "lr2021 rx drop"),
+                        Err(e) => tracing::debug!(
+                            error = %e,
+                            len = rx.data.len(),
+                            head = %hex_prefix(&rx.data),
+                            "lr2021 rx drop"
+                        ),
                     }
                 }
             }
@@ -219,6 +237,7 @@ impl Transport for Lr2021Transport {
             return Err(TransportError::NotStarted);
         }
         let dst = addr_to_id(addr)?;
+        tracing::debug!(dst, bytes = data.len(), "lr2021 send frame");
         let now = now_ms();
         let mut guard = self.link.lock().unwrap();
         let link = guard.as_mut().ok_or(TransportError::NotStarted)?;
@@ -257,6 +276,14 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+fn hex_prefix(data: &[u8]) -> String {
+    data.iter()
+        .take(12)
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
 /// Peer addresses cross the YAML/API boundary as UTF-8 strings. Use the same
 /// canonical decimal form in both directions; interpreting the ASCII bytes as
 /// a little-endian integer made `addr: "2"` become link id 0x32.
@@ -285,8 +312,15 @@ fn id_to_addr(id: u32) -> TransportAddr {
 
 #[cfg(test)]
 mod tests {
-    use super::{addr_to_id, id_to_addr};
+    use super::{addr_to_id, hex_prefix, id_to_addr};
     use crate::transport::TransportAddr;
+
+    #[test]
+    fn corrupt_frame_logs_include_prefix_without_full_payload() {
+        assert_eq!(hex_prefix(&[0xF1, 0x50, 0x10, 0x00, 0xAA]), "f1501000aa");
+        assert_eq!(hex_prefix(&[0u8; 20]), "000000000000000000000000");
+        assert_eq!(hex_prefix(&[]), "");
+    }
 
     #[test]
     fn peer_addresses_round_trip_decimal_link_ids() {

@@ -63,6 +63,8 @@ enum Command {
         peer_id: u32,
         #[arg(long, default_value_t = 1000)]
         timeout_ms: u64,
+        #[arg(long)]
+        radio_payload: Option<u16>,
     },
     /// Run the link-layer responder: ACK received frames and print them.
     Echo {
@@ -70,6 +72,8 @@ enum Command {
         band: String,
         #[arg(long, default_value_t = 30)]
         seconds: u64,
+        #[arg(long)]
+        radio_payload: Option<u16>,
     },
 }
 
@@ -139,6 +143,7 @@ fn run(args: Args) -> Result<(), String> {
             size,
             peer_id,
             timeout_ms,
+            radio_payload,
         } => {
             let band = Band::parse(&band).ok_or_else(|| format!("unknown band '{band}'"))?;
             per(
@@ -149,12 +154,24 @@ fn run(args: Args) -> Result<(), String> {
                 size,
                 peer_id,
                 timeout_ms,
+                radio_payload,
                 sync.clone(),
             )
         }
-        Command::Echo { band, seconds } => {
+        Command::Echo {
+            band,
+            seconds,
+            radio_payload,
+        } => {
             let band = Band::parse(&band).ok_or_else(|| format!("unknown band '{band}'"))?;
-            echo(&args.serial, args.baud, band, seconds, sync.clone())
+            echo(
+                &args.serial,
+                args.baud,
+                band,
+                seconds,
+                radio_payload,
+                sync.clone(),
+            )
         }
     }
 }
@@ -273,9 +290,8 @@ fn monitor(
         sync_word: sync,
         ..Lr2021Config::default()
     };
-    let (mut bridge, _) =
-        fips_lr2021::open_device(&cfg.bridge_config()?, cfg.link_config()?)
-            .map_err(|e| e.to_string())?;
+    let (mut bridge, _) = fips_lr2021::open_device(&cfg.bridge_config()?, cfg.link_config()?)
+        .map_err(|e| e.to_string())?;
     let deadline = Instant::now() + Duration::from_secs(seconds);
     let mut packets = 0u64;
     while Instant::now() < deadline {
@@ -307,12 +323,14 @@ fn per(
     size: usize,
     peer_id: u32,
     timeout_ms: u64,
+    radio_payload: Option<u16>,
     sync: Option<String>,
 ) -> Result<(), String> {
     let cfg = Lr2021Config {
         port: Some(serial.to_string()),
         baud: Some(baud),
         band: Some(band),
+        radio_payload,
         sync_word: sync,
         ..Lr2021Config::default()
     };
@@ -390,12 +408,14 @@ fn echo(
     baud: u32,
     band: Band,
     seconds: u64,
+    radio_payload: Option<u16>,
     sync: Option<String>,
 ) -> Result<(), String> {
     let cfg = Lr2021Config {
         port: Some(serial.to_string()),
         baud: Some(baud),
         band: Some(band),
+        radio_payload,
         sync_word: sync,
         local_id: Some(2),
         ..Lr2021Config::default()

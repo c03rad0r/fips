@@ -192,6 +192,9 @@ pub struct BridgeConfig {
     pub baud: u32,
     pub profile: RadioProfile,
     pub relay: bool,
+    /// FIPS link ID, also used by TDMA-capable ESP bridges as the slot role
+    /// (`local_id & 1`). Peers must use opposite parity (normally 1 and 2).
+    pub local_id: u32,
 }
 
 impl Default for BridgeConfig {
@@ -201,6 +204,7 @@ impl Default for BridgeConfig {
             baud: 2_000_000,
             profile: Band::Eu2400.default_profile(),
             relay: false,
+            local_id: 1,
         }
     }
 }
@@ -301,6 +305,7 @@ impl Lr2021Config {
             baud: self.baud(),
             profile: self.profile()?,
             relay: self.relay(),
+            local_id: self.local_id(),
         })
     }
 

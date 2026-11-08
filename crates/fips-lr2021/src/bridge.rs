@@ -28,6 +28,7 @@ pub enum BridgeKind {
     Evt = 8,
     Ping = 9,
     Pong = 10,
+    CfgExt = 11,
 }
 
 impl BridgeKind {
@@ -43,6 +44,7 @@ impl BridgeKind {
             8 => Some(Self::Evt),
             9 => Some(Self::Ping),
             10 => Some(Self::Pong),
+            11 => Some(Self::CfgExt),
             _ => None,
         }
     }
@@ -411,6 +413,16 @@ mod tests {
 
     fn sample_frame(kind: BridgeKind, payload: &[u8]) -> Vec<u8> {
         encode(kind, payload)
+    }
+
+    #[test]
+    fn cfg_ext_frame_roundtrips_through_decoder() {
+        let payload = [1u8, 0, 0, 0, 0x10, 0x20, 0, 0, 0, 0, 0, 0];
+        let mut decoder = BridgeDecoder::new();
+        let frames = decoder.push(&encode(BridgeKind::CfgExt, &payload));
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].kind, BridgeKind::CfgExt);
+        assert_eq!(frames[0].payload, payload);
     }
 
     #[test]
