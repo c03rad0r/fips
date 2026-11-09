@@ -50,6 +50,8 @@ enum Command {
         band: String,
         #[arg(long, default_value_t = 10)]
         seconds: u64,
+        #[arg(long)]
+        radio_payload: Option<u16>,
     },
     /// Send a small PER burst and report delivery.
     Per {
@@ -133,9 +135,20 @@ fn run(args: Args) -> Result<(), String> {
             Ok(())
         }
         Command::Status => status(&args.serial, args.baud),
-        Command::Monitor { band, seconds } => {
+        Command::Monitor {
+            band,
+            seconds,
+            radio_payload,
+        } => {
             let band = Band::parse(&band).ok_or_else(|| format!("unknown band '{band}'"))?;
-            monitor(&args.serial, args.baud, band, seconds, sync.clone())
+            monitor(
+                &args.serial,
+                args.baud,
+                band,
+                seconds,
+                radio_payload,
+                sync.clone(),
+            )
         }
         Command::Per {
             band,
@@ -281,12 +294,14 @@ fn monitor(
     baud: u32,
     band: Band,
     seconds: u64,
+    radio_payload: Option<u16>,
     sync: Option<String>,
 ) -> Result<(), String> {
     let cfg = Lr2021Config {
         port: Some(serial.to_string()),
         baud: Some(baud),
         band: Some(band),
+        radio_payload,
         sync_word: sync,
         ..Lr2021Config::default()
     };
