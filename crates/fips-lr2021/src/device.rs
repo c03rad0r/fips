@@ -105,7 +105,22 @@ fn wait_for(
 
 /// Write a batch of raw radio packets as `Tx` frames.
 pub fn send_packets(bridge: &mut SerialBridge, packets: &[Vec<u8>]) -> Result<(), BridgeError> {
-    for packet in packets {
+    send_packets_paced(bridge, packets, Duration::ZERO)
+}
+
+/// Write a fragment batch with an optional gap between radio packets. This is
+/// useful for diagnosing receive-side exhaustion on half-duplex bridges: the
+/// default remains back-to-back, while a test can give each receiver time to
+/// finish RX before the next packet arrives without changing its firmware.
+pub fn send_packets_paced(
+    bridge: &mut SerialBridge,
+    packets: &[Vec<u8>],
+    gap: Duration,
+) -> Result<(), BridgeError> {
+    for (index, packet) in packets.iter().enumerate() {
+        if index > 0 && !gap.is_zero() {
+            std::thread::sleep(gap);
+        }
         bridge.write_frame(BridgeKind::Tx, packet)?;
     }
     Ok(())

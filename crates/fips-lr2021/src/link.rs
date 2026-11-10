@@ -54,6 +54,7 @@ pub struct RxOutcome {
 }
 
 struct Pending {
+    dst: u32,
     encoded: Vec<Vec<u8>>,
     acked: Vec<bool>,
     sent_at: u64,
@@ -180,6 +181,7 @@ impl Link {
         self.pending.insert(
             seq,
             Pending {
+                dst,
                 acked: vec![false; frag_count],
                 encoded: encoded.clone(),
                 sent_at: now,
@@ -270,8 +272,15 @@ impl Link {
 
         let complete = (0..frag_count).all(|idx| bitmap_get(&entry.bitmap, idx));
         if !complete {
+            // Do not answer every intermediate fragment: its ACK would contend
+            // with the rest of the batch still being transmitted. Once the
+            // tail arrives, one NACK reports the complete receive bitmap and
+            // lets the sender repair exactly the missing fragments.
+            if frame.frag_idx + 1 != frag_count {
+                return Ok(RxOutcome::default());
+            }
             let bitmap = entry.bitmap.clone();
-            return self.ack_outcome(frame, frag_count, &bitmap, false);
+            return self.ack_outcome(frame, frag_count, &bitmap, true);
         }
 
         let last_len = entry.lens[(frag_count - 1) as usize];
@@ -291,11 +300,19 @@ impl Link {
         let Some((frag_count, bitmap)) = parse_ack_payload(frame.payload) else {
             return Ok(RxOutcome::default());
         };
+        if frame.epoch != self.epoch {
+            return Ok(RxOutcome::default());
+        }
         self.stats.acks_rx += 1;
 
         let Some(pending) = self.pending.get_mut(&frame.seq) else {
             return Ok(RxOutcome::default());
         };
+        // Both directions start their sequence counters at one. Do not let an
+        // identically numbered frame from another peer ACK this transmission.
+        if frame.src != pending.dst {
+            return Ok(RxOutcome::default());
+        }
         if frag_count as usize != pending.encoded.len() {
             return Ok(RxOutcome::default());
         }
@@ -310,9 +327,14 @@ impl Link {
             self.pending.remove(&frame.seq);
             return Ok(RxOutcome::default());
         }
+        if frame.kind == FrameKind::Ack {
+            // A partial cumulative ACK is progress information, not a request
+            // to duplicate an in-flight batch. The ACK timer is the backstop;
+            // only an explicit tail NACK triggers immediate selective repair.
+            return Ok(RxOutcome::default());
+        }
 
-        // Some fragments are still missing. Retransmit them now; the sender's
-        // timer is a backstop for a lost ACK.
+        // A tail NACK identifies exactly which fragments are still missing.
         let mut outbound = Vec::new();
         for (idx, packet) in pending.encoded.iter().enumerate() {
             if !pending.acked[idx] {
@@ -459,6 +481,74 @@ mod tests {
         assert_eq!(delivered.len(), 1);
         assert_eq!(delivered[0].0, 1);
         assert_eq!(delivered[0].1, data);
+    }
+
+    #[test]
+    fn rejects_ack_for_wrong_peer_or_epoch() {
+        let (mut a, mut b) = pair();
+        let packets = a.submit(b"authenticated ack", 2, 0).unwrap();
+        let outcome = b.process(&packets[0], 1).unwrap();
+        assert_eq!(outcome.outbound.len(), 1);
+        let ack = Frame::decode(&outcome.outbound[0]).unwrap();
+
+        let mut encoded = Vec::new();
+        Frame { src: 3, ..ack }.encode(&mut encoded).unwrap();
+        a.process(&encoded, 2).unwrap();
+        assert_eq!(a.pending_len(), 1, "another peer must not ACK this frame");
+
+        Frame {
+            epoch: ack.epoch.wrapping_add(1),
+            ..ack
+        }
+        .encode(&mut encoded)
+        .unwrap();
+        a.process(&encoded, 3).unwrap();
+        assert_eq!(a.pending_len(), 1, "another epoch must not ACK this frame");
+
+        a.process(&outcome.outbound[0], 4).unwrap();
+        assert_eq!(a.pending_len(), 0, "the real peer and epoch still complete");
+    }
+
+    #[test]
+    fn nacks_once_at_batch_tail_and_repairs_missing_fragment() {
+        let (mut a, mut b) = pair();
+        let data = vec![0x77; 700];
+        let packets = a.submit(&data, 2, 0).unwrap();
+        assert!(packets.len() >= 3);
+
+        let mut tail_nack = None;
+        for (idx, packet) in packets.iter().enumerate() {
+            if idx == 1 {
+                continue; // Lose one intermediate fragment.
+            }
+            let outcome = b.process(packet, 1).unwrap();
+            assert!(outcome.delivered.is_empty());
+            if idx + 1 < packets.len() {
+                assert!(
+                    outcome.outbound.is_empty(),
+                    "intermediate fragments must not contend with the batch"
+                );
+            } else {
+                tail_nack = Some(outcome.outbound);
+            }
+        }
+
+        let nacks = tail_nack.expect("tail must report the incomplete bitmap");
+        assert_eq!(nacks.len(), 1);
+        assert_eq!(Frame::decode(&nacks[0]).unwrap().kind, FrameKind::Nack);
+
+        let repair = a.process(&nacks[0], 2).unwrap().outbound;
+        assert_eq!(repair.len(), 1, "only the missing fragment is repeated");
+        assert_eq!(repair[0], packets[1]);
+
+        let outcome = b.process(&repair[0], 3).unwrap();
+        assert_eq!(outcome.delivered.len(), 1);
+        assert_eq!(outcome.delivered[0].1, data);
+        assert_eq!(outcome.outbound.len(), 1, "one final completion ACK");
+        assert_eq!(
+            Frame::decode(&outcome.outbound[0]).unwrap().kind,
+            FrameKind::Ack
+        );
     }
 
     #[test]

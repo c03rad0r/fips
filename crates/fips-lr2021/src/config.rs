@@ -250,6 +250,9 @@ pub struct Lr2021Config {
     pub ack_timeout_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_retries: Option<u8>,
+    /// Optional delay between USB transmissions in one fragment batch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packet_gap_ms: Option<u64>,
 }
 
 impl Lr2021Config {
@@ -293,6 +296,10 @@ impl Lr2021Config {
 
     pub fn auto_connect(&self) -> bool {
         self.auto_connect.unwrap_or(false)
+    }
+
+    pub fn packet_gap_ms(&self) -> u64 {
+        self.packet_gap_ms.unwrap_or(0)
     }
 
     pub fn local_id(&self) -> u32 {
@@ -372,6 +379,16 @@ mod tests {
         assert_eq!(parse_sync_word("12ad101b").unwrap(), DEFAULT_SYNC_WORD);
         assert_eq!(parse_sync_word("12:AD:10:1B").unwrap(), DEFAULT_SYNC_WORD);
         assert!(parse_sync_word("12ad10").is_err());
+    }
+
+    #[test]
+    fn fragment_pacing_defaults_off_and_is_configurable() {
+        assert_eq!(Lr2021Config::default().packet_gap_ms(), 0);
+        let cfg = Lr2021Config {
+            packet_gap_ms: Some(20),
+            ..Lr2021Config::default()
+        };
+        assert_eq!(cfg.packet_gap_ms(), 20);
     }
 
     #[test]
