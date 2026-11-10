@@ -8,6 +8,8 @@ use std::net::{IpAddr, SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
+pub use fips_lr2021::Lr2021Config;
+
 /// Parse an `external_addr` config string against a known bind port,
 /// producing the absolute `SocketAddr` to advertise on Nostr.
 ///
@@ -982,6 +984,10 @@ pub struct TransportsConfig {
     /// BLE transport instances.
     #[serde(default, skip_serializing_if = "is_transport_empty")]
     pub ble: TransportInstances<BleConfig>,
+
+    /// LR2021/FLRC transport instances.
+    #[serde(default, skip_serializing_if = "is_transport_empty")]
+    pub lr2021: TransportInstances<Lr2021Config>,
 }
 
 /// Helper for skip_serializing_if on TransportInstances.
@@ -998,6 +1004,7 @@ impl TransportsConfig {
             && self.tor.is_empty()
             && self.nym.is_empty()
             && self.ble.is_empty()
+            && self.lr2021.is_empty()
     }
 
     /// Merge another TransportsConfig into this one.
@@ -1022,12 +1029,28 @@ impl TransportsConfig {
         if !other.ble.is_empty() {
             self.ble = other.ble;
         }
+        if !other.lr2021.is_empty() {
+            self.lr2021 = other.lr2021;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lr2021_transport_parses() {
+        let transports: TransportsConfig = serde_yaml::from_str(
+            "lr2021:\n  port: /dev/ttyACM0\n  band: us915\n  local_id: 7\n",
+        )
+        .unwrap();
+        let (_, cfg) = transports.lr2021.iter().next().unwrap();
+        assert_eq!(cfg.port(), "/dev/ttyACM0");
+        assert_eq!(cfg.band(), fips_lr2021::Band::Us915);
+        assert_eq!(cfg.local_id(), 7);
+        assert!(!transports.is_empty());
+    }
 
     #[test]
     fn parse_external_addr_accepts_bare_ipv4_with_appended_bind_port() {

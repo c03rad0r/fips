@@ -6,6 +6,7 @@
 
 #[cfg(test)]
 pub mod loopback;
+pub mod lr2021;
 pub mod nym;
 pub mod socks5;
 pub mod tcp;
@@ -363,6 +364,15 @@ impl TransportType {
         name: "ble",
         connection_oriented: true,
         reliable: true, // L2CAP SeqPacket guarantees delivery
+    };
+
+    /// LR2021/FLRC packet radio transport.
+    pub const LR2021: TransportType = TransportType {
+        name: "lr2021",
+        connection_oriented: false,
+        // The link layer retries, but a frame can still be dropped after the
+        // retry budget; FIPS must keep treating it as lossy.
+        reliable: false,
     };
 
     /// In-process loopback transport (test harness only).
@@ -849,6 +859,8 @@ pub enum TransportHandle {
     Tor(TorTransport),
     /// Nym mixnet transport (via SOCKS5).
     Nym(NymTransport),
+    /// LR2021/FLRC packet radio transport.
+    Lr2021(lr2021::Lr2021Transport),
     /// BLE L2CAP transport.
     #[cfg(ble_available)]
     Ble(DefaultBleTransport),
@@ -867,6 +879,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.start_async().await,
             TransportHandle::Tor(t) => t.start_async().await,
             TransportHandle::Nym(t) => t.start_async().await,
+            TransportHandle::Lr2021(t) => t.start(),
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.start_async().await,
             #[cfg(test)]
@@ -883,6 +896,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.stop_async().await,
             TransportHandle::Tor(t) => t.stop_async().await,
             TransportHandle::Nym(t) => t.stop_async().await,
+            TransportHandle::Lr2021(t) => t.stop(),
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.stop_async().await,
             #[cfg(test)]
@@ -899,6 +913,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.send_async(addr, data).await,
             TransportHandle::Tor(t) => t.send_async(addr, data).await,
             TransportHandle::Nym(t) => t.send_async(addr, data).await,
+            TransportHandle::Lr2021(t) => t.send(addr, data).map(|_| data.len()),
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.send_async(addr, data).await,
             #[cfg(test)]
@@ -929,6 +944,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.send_existing(addr, data).await,
             TransportHandle::Tor(t) => t.send_existing(addr, data).await,
             TransportHandle::Nym(t) => t.send_existing(addr, data).await,
+            TransportHandle::Lr2021(t) => t.send(addr, data).map(|_| data.len()),
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.send_async(addr, data).await,
             #[cfg(test)]
@@ -955,6 +971,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.has_connection(addr).await,
             TransportHandle::Tor(t) => t.has_connection(addr).await,
             TransportHandle::Nym(t) => t.has_connection(addr).await,
+            TransportHandle::Lr2021(_) => true,
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.has_connection(addr).await,
             #[cfg(test)]
@@ -971,6 +988,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.transport_id(),
             TransportHandle::Tor(t) => t.transport_id(),
             TransportHandle::Nym(t) => t.transport_id(),
+            TransportHandle::Lr2021(t) => t.transport_id(),
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.transport_id(),
             #[cfg(test)]
@@ -987,6 +1005,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.name(),
             TransportHandle::Tor(t) => t.name(),
             TransportHandle::Nym(t) => t.name(),
+            TransportHandle::Lr2021(t) => t.name(),
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.name(),
             #[cfg(test)]
@@ -1003,6 +1022,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.transport_type(),
             TransportHandle::Tor(t) => t.transport_type(),
             TransportHandle::Nym(t) => t.transport_type(),
+            TransportHandle::Lr2021(t) => t.transport_type(),
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.transport_type(),
             #[cfg(test)]
@@ -1019,6 +1039,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.state(),
             TransportHandle::Tor(t) => t.state(),
             TransportHandle::Nym(t) => t.state(),
+            TransportHandle::Lr2021(t) => t.state(),
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.state(),
             #[cfg(test)]
@@ -1035,6 +1056,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.mtu(),
             TransportHandle::Tor(t) => t.mtu(),
             TransportHandle::Nym(t) => t.mtu(),
+            TransportHandle::Lr2021(t) => t.mtu(),
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.mtu(),
             #[cfg(test)]
@@ -1054,6 +1076,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.link_mtu(addr),
             TransportHandle::Tor(t) => t.link_mtu(addr),
             TransportHandle::Nym(t) => t.link_mtu(addr),
+            TransportHandle::Lr2021(t) => t.link_mtu(addr),
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.link_mtu(addr),
             #[cfg(test)]
@@ -1070,6 +1093,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.local_addr(),
             TransportHandle::Tor(_) => None,
             TransportHandle::Nym(_) => None,
+            TransportHandle::Lr2021(_) => None,
             #[cfg(ble_available)]
             TransportHandle::Ble(_) => None,
             #[cfg(test)]
@@ -1090,6 +1114,7 @@ impl TransportHandle {
             TransportHandle::Tcp(_) => None,
             TransportHandle::Tor(_) => None,
             TransportHandle::Nym(_) => None,
+            TransportHandle::Lr2021(_) => None,
             #[cfg(ble_available)]
             TransportHandle::Ble(_) => None,
             #[cfg(test)]
@@ -1152,6 +1177,7 @@ impl TransportHandle {
             TransportHandle::Tcp(_) => None,
             TransportHandle::Tor(_) => None,
             TransportHandle::Nym(_) => None,
+            TransportHandle::Lr2021(_) => None,
             #[cfg(ble_available)]
             TransportHandle::Ble(_) => None,
             #[cfg(test)]
@@ -1192,6 +1218,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.discover(),
             TransportHandle::Tor(t) => t.discover(),
             TransportHandle::Nym(t) => t.discover(),
+            TransportHandle::Lr2021(t) => t.discover(),
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.discover(),
             #[cfg(test)]
@@ -1208,6 +1235,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.auto_connect(),
             TransportHandle::Tor(t) => t.auto_connect(),
             TransportHandle::Nym(t) => t.auto_connect(),
+            TransportHandle::Lr2021(t) => t.auto_connect(),
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.auto_connect(),
             #[cfg(test)]
@@ -1224,6 +1252,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.accept_connections(),
             TransportHandle::Tor(t) => t.accept_connections(),
             TransportHandle::Nym(t) => t.accept_connections(),
+            TransportHandle::Lr2021(t) => t.accept_connections(),
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.accept_connections(),
             #[cfg(test)]
@@ -1246,6 +1275,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.connect_async(addr).await,
             TransportHandle::Tor(t) => t.connect_async(addr).await,
             TransportHandle::Nym(t) => t.connect_async(addr).await,
+            TransportHandle::Lr2021(_) => Ok(()),
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.connect_async(addr).await,
             #[cfg(test)]
@@ -1266,6 +1296,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.connection_state_sync(addr),
             TransportHandle::Tor(t) => t.connection_state_sync(addr),
             TransportHandle::Nym(t) => t.connection_state_sync(addr),
+            TransportHandle::Lr2021(_) => ConnectionState::Connected,
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.connection_state_sync(addr),
             #[cfg(test)]
@@ -1285,6 +1316,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => t.close_connection_async(addr).await,
             TransportHandle::Tor(t) => t.close_connection_async(addr).await,
             TransportHandle::Nym(t) => t.close_connection_async(addr).await,
+            TransportHandle::Lr2021(_) => {}
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => t.close_connection_async(addr).await,
             #[cfg(test)]
@@ -1304,7 +1336,8 @@ impl TransportHandle {
             TransportHandle::Udp(_)
             | TransportHandle::Tcp(_)
             | TransportHandle::Tor(_)
-            | TransportHandle::Nym(_) => {}
+            | TransportHandle::Nym(_)
+            | TransportHandle::Lr2021(_) => {}
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             TransportHandle::Ethernet(_) => {}
             #[cfg(ble_available)]
@@ -1324,7 +1357,8 @@ impl TransportHandle {
             TransportHandle::Udp(_)
             | TransportHandle::Tcp(_)
             | TransportHandle::Tor(_)
-            | TransportHandle::Nym(_) => {}
+            | TransportHandle::Nym(_)
+            | TransportHandle::Lr2021(_) => {}
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             TransportHandle::Ethernet(_) => {}
             #[cfg(ble_available)]
@@ -1342,7 +1376,8 @@ impl TransportHandle {
             TransportHandle::Udp(_)
             | TransportHandle::Tcp(_)
             | TransportHandle::Tor(_)
-            | TransportHandle::Nym(_) => false,
+            | TransportHandle::Nym(_)
+            | TransportHandle::Lr2021(_) => false,
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             TransportHandle::Ethernet(_) => false,
             #[cfg(ble_available)]
@@ -1370,6 +1405,7 @@ impl TransportHandle {
             TransportHandle::Tcp(_) => TransportCongestion::default(),
             TransportHandle::Tor(_) => TransportCongestion::default(),
             TransportHandle::Nym(_) => TransportCongestion::default(),
+            TransportHandle::Lr2021(_) => TransportCongestion::default(),
             #[cfg(ble_available)]
             TransportHandle::Ble(_) => TransportCongestion::default(),
             #[cfg(test)]
@@ -1397,6 +1433,7 @@ impl TransportHandle {
             TransportHandle::Tcp(t) => LiveStats::Tcp(t.stats().clone()),
             TransportHandle::Tor(t) => LiveStats::Tor(t.stats().clone()),
             TransportHandle::Nym(t) => LiveStats::Nym(t.stats().clone()),
+            TransportHandle::Lr2021(_) => LiveStats::Lr2021,
             #[cfg(ble_available)]
             TransportHandle::Ble(t) => LiveStats::Ble(t.stats().clone()),
             #[cfg(test)]
@@ -1426,6 +1463,8 @@ pub(crate) enum LiveStats {
     /// BLE transport counters.
     #[cfg(ble_available)]
     Ble(std::sync::Arc<ble::stats::BleStats>),
+    /// LR2021 counters are not exposed through this path yet.
+    Lr2021,
     /// No counters (the test loopback transport).
     #[cfg(test)]
     Empty,
@@ -1444,6 +1483,7 @@ impl LiveStats {
             LiveStats::Nym(s) => serde_json::to_value(s.snapshot()).unwrap_or_default(),
             #[cfg(ble_available)]
             LiveStats::Ble(s) => serde_json::to_value(s.snapshot()).unwrap_or_default(),
+            LiveStats::Lr2021 => serde_json::json!({}),
             #[cfg(test)]
             LiveStats::Empty => serde_json::json!({}),
         }
@@ -1464,6 +1504,7 @@ impl PartialEq for LiveStats {
             (LiveStats::Nym(a), LiveStats::Nym(b)) => Arc::ptr_eq(a, b),
             #[cfg(ble_available)]
             (LiveStats::Ble(a), LiveStats::Ble(b)) => Arc::ptr_eq(a, b),
+            (LiveStats::Lr2021, LiveStats::Lr2021) => true,
             #[cfg(test)]
             (LiveStats::Empty, LiveStats::Empty) => true,
             _ => false,

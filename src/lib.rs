@@ -65,6 +65,7 @@ pub use proto::stp::{
 pub use proto::bloom::{BloomError, BloomFilter, BloomState};
 
 // Re-export transport types
+pub use transport::lr2021::Lr2021Transport;
 pub use transport::udp::UdpTransport;
 pub use transport::{
     DiscoveredPeer, Link, LinkDirection, LinkId, LinkState, LinkStats, PacketRx, PacketTx,

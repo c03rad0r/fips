@@ -1528,6 +1528,25 @@ impl Node {
             transports.push(TransportHandle::Nym(nym));
         }
 
+        // Create LR2021 transport instances
+        let lr2021_instances: Vec<_> = self
+            .config()
+            .transports
+            .lr2021
+            .iter()
+            .map(|(name, config)| (name.map(|s| s.to_string()), config.clone()))
+            .collect();
+        for (name, lr_config) in lr2021_instances {
+            let transport_id = self.allocate_transport_id();
+            let lr = crate::transport::lr2021::Lr2021Transport::new(
+                transport_id,
+                name,
+                lr_config,
+                packet_tx.clone(),
+            );
+            transports.push(TransportHandle::Lr2021(lr));
+        }
+
         // Create BLE transport instances
         #[cfg(all(bluer_available, not(test)))]
         {

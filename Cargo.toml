@@ -39,8 +39,8 @@ path = "src/lib.rs"
 # clippy` and `cargo test` cover the core crate too; without it they cover the
 # root package only.
 [workspace]
-members = [".", "core"]
-default-members = [".", "core"]
+members = [".", "core", "crates/fips-lr2021"]
+default-members = [".", "core", "crates/fips-lr2021"]
 
 # fips-core's rekey simulations, explorer and model runs are CPU-bound and run
 # more than twice as fast optimized. Only the core is optimized; overflow
@@ -78,6 +78,7 @@ ring = "0.17"
 zeroize = { version = "1.9", features = ["zeroize_derive"] }
 rand = "0.10.1"
 crossbeam-channel = "0.5"
+fips-lr2021 = { path = "crates/fips-lr2021" }
 thiserror = "2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
