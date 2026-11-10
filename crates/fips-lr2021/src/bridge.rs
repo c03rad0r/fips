@@ -461,6 +461,18 @@ mod tests {
     }
 
     #[test]
+    fn rx_511_byte_payload_roundtrips() {
+        let rx = RxPayload {
+            rssi_dbm: -32,
+            snr_db: 0,
+            crc_ok: true,
+            data: (0..511).map(|index| (index % 251) as u8).collect(),
+        };
+        let encoded = rx.encode();
+        assert_eq!(RxPayload::decode(&encoded), Some(rx));
+    }
+
+    #[test]
     fn rx_roundtrip() {
         let rx = RxPayload {
             rssi_dbm: -42,
