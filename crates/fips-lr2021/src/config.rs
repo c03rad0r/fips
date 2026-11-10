@@ -375,6 +375,23 @@ mod tests {
     }
 
     #[test]
+    fn flrc_511_payload_is_supported_and_512_is_rejected() {
+        let mut cfg = Lr2021Config {
+            band: Some(Band::Eu2400),
+            radio_payload: Some(511),
+            ..Lr2021Config::default()
+        };
+        let profile = cfg.profile().unwrap();
+        assert_eq!(profile.frequency_hz, 2_440_000_000);
+        assert_eq!(profile.bitrate_kbps, 2600);
+        assert_eq!(profile.radio_payload, 511);
+        profile.validate().unwrap();
+
+        cfg.radio_payload = Some(512);
+        assert!(cfg.profile().is_err());
+    }
+
+    #[test]
     fn sync_word_parses() {
         assert_eq!(parse_sync_word("12ad101b").unwrap(), DEFAULT_SYNC_WORD);
         assert_eq!(parse_sync_word("12:AD:10:1B").unwrap(), DEFAULT_SYNC_WORD);
